@@ -15,7 +15,7 @@ from random import randint
 from utils.loss_utils import l1_loss, ssim 
 
 import sys
-from scene import Scene, GaussianModel
+from scene import Scene
 import uuid
 from tqdm import tqdm
 
@@ -28,7 +28,7 @@ except ImportError:
     TENSORBOARD_FOUND = False
 
 import torch.nn.functional as F
-from models.networks import CNN_decoder
+from PIL import Image
 
 #/////////////////////////
 import numpy as np
@@ -38,6 +38,8 @@ from torch.utils.tensorboard import SummaryWriter
 from encoders.XFeat.modules.xfeat import XFeat
 from utils.pose_utils import getGTXYZ
 from scene.feat_pointcloud import FeatPointCloud
+
+from utils.general_utils import image_process
 
 """
 python train.py -s datasets/wholehead/ -m output_wholescene/img_2000_head --iteration 15000
@@ -49,97 +51,47 @@ If we train with disk, we need to point out in the dataset_reader.py where to fi
 
 """
 
-def find_2d3d_correspondences(keypoints, image_features, gaussian_pcd, gaussian_feat, chunk_size=10000):
-    device = image_features.device
-    f_N, feat_dim = image_features.shape
-    P_N = gaussian_feat.shape[0]
-    
-    # Normalize features for faster cosine similarity computation
-    image_features = F.normalize(image_features, p=2, dim=1)
-    gaussian_feat = F.normalize(gaussian_feat, p=2, dim=1)
-    
-    max_similarity = torch.full((f_N,), -float('inf'), device=device)
-    max_indices = torch.zeros(f_N, dtype=torch.long, device=device)
-    
-    for part in range(0, P_N, chunk_size):
-        chunk = gaussian_feat[part:part + chunk_size]
-        # Use matrix multiplication for faster similarity computation
-        similarity = torch.mm(image_features, chunk.t())
-        
-        chunk_max, chunk_indices = similarity.max(dim=1)
-        update_mask = chunk_max > max_similarity
-        max_similarity[update_mask] = chunk_max[update_mask]
-        max_indices[update_mask] = chunk_indices[update_mask] + part
-
-    point_vis = gaussian_pcd[max_indices].cpu().numpy().astype(np.float64)
-    point_vis_feature = gaussian_feat[max_indices].cpu().numpy()
-    keypoints_matched = keypoints[..., :2].cpu().numpy().astype(np.float64)
-    
-    return keypoints_matched, point_vis, point_vis_feature
-
 
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree)
-    scene = Scene(dataset, gaussians)
+
+    scene = Scene(dataset)
     featpc = FeatPointCloud()
     featpc.init_feat_pc(dataset.source_path, 64)
     xfeat = XFeat(top_k=4096)
     
     # 2D semantic feature map CNN decoder
     viewpoint_stack = scene.getTrainCameras().copy()
+    num_datas = len(viewpoint_stack)
     viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-    #gt_feature_map = viewpoint_cam.semantic_feature.cuda()
-    #feature_out_dim = gt_feature_map.shape[0]
-    feature_out_dim = 64
+
 
     
-    # speed up
-    if dataset.speedup:
-        feature_in_dim = int(feature_out_dim/4)
-        cnn_decoder = CNN_decoder(feature_in_dim, feature_out_dim)
-        cnn_decoder_optimizer = torch.optim.Adam(cnn_decoder.parameters(), lr=0.0001)
-
-
-    gaussians.training_setup(opt)
-    if checkpoint:
-        (model_params, first_iter) = torch.load(checkpoint)
-        gaussians.restore(model_params, opt)
-
-    bg_color = [1]*64 if dataset.white_background else [0]*64
-    background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-
+    
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
     viewpoint_stack = None
-    ema_loss_for_log = 0.0
+
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     
-    saving_itr = np.arange(500,opt.iterations+100,5000)
-
-    for iteration in range(first_iter, opt.iterations + 1):
+    for iteration in range(num_datas):
 
         iter_start.record()
 
-        gaussians.update_learning_rate(iteration)
-
-        # Every 1000 its we increase the levels of SH up to a maximum degree
-        if iteration % 1000 == 0:
-            gaussians.oneupSHdegree()
-
-        # Pick a random Camera
-        if not viewpoint_stack:
-            viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+        
+        try:
+            image = Image.open(viewpoint_cam.image_path) 
+        except:
+            print(f"Error opening image: {viewpoint_cam.image_path}")
+            continue
+        
+        original_image = image_process()
 
-        # Render
-        if (iteration - 1) == debug_from:
-            pipe.debug = True
-        render_pkg = render(viewpoint_cam, gaussians, pipe, background)
         
 
         feature_map, image, viewspace_point_tensor, visibility_filter, radii = render_pkg["feature_map"], render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
@@ -150,14 +102,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gt_feature_map = xfeat.get_descriptors(gt_image[None])[0]
 
         feature_map = F.interpolate(feature_map.unsqueeze(0), size=(gt_feature_map.shape[1], gt_feature_map.shape[2]), mode='bilinear', align_corners=True).squeeze(0) #640x480
-        if dataset.speedup:
-            feature_map = cnn_decoder(feature_map)
-        Ll1_feature = l1_loss(feature_map, gt_feature_map) 
-        print("feature map size = ", feature_map.shape)
-        print("gt feature map size = ", gt_feature_map.shape)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)) + 1.0 * Ll1_feature 
-        loss.backward()
-        iter_end.record()
+
         
         """
         Move the matching gaussian to its Gt position
