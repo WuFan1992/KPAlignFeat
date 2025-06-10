@@ -56,7 +56,7 @@ If we train with disk, we need to point out in the dataset_reader.py where to fi
 def training(dataset):
     first_iter = 0
 
-    scene = Scene(dataset)
+    scene = Scene(dataset, load_iteration=15000)
     featpc = FeatPointCloud()
     featpc.init_feat_pc(dataset.source_path, 64)
     xfeat = XFeat(top_k=4096)
@@ -87,15 +87,13 @@ def training(dataset):
 
         gt_image = original_image.cuda()
         gt_feature_map = xfeat.get_descriptors(gt_image[None])[0]
+        print("gt_feature_map shape = ", gt_feature_map.shape)
+
 
         feature_map = F.interpolate(gt_feature_map.unsqueeze(0), size=(gt_image.shape[1], gt_image.shape[2]), mode='bilinear', align_corners=True).squeeze(0) #640x480
+        print("feature map shape = ", feature_map.shape)
         keypoint_feat = sample_features(torch.tensor(viewpoint_cam.keypoints).to("cuda"), feature_map)
-        
-        """
-        Move the matching gaussian to its Gt position
-        
-        """ 
-    
+            
         featpc.update_ply(viewpoint_cam.point3d_id, keypoint_feat)
         
         print("index = ", index)
@@ -103,7 +101,7 @@ def training(dataset):
     print("\n[Data : {}] Saving".format(num_datas))
 
     #save feature point cloud 
-    point_cloud_path = os.path.join(scene.model_path, "kpalign_point_cloud_chess/iteration_{}".format(15000))
+    point_cloud_path = os.path.join(scene.model_path, "kpalign_point_cloud/iteration_{}".format(15000))
     featpc.save_ply(os.path.join(point_cloud_path, "kpalign_point_cloud.ply"))
 
   
