@@ -17,24 +17,23 @@ import os
 
 WARNED = False
 
-def loadCam(args, id, cam_info, resolution_scale):
+def loadCam(args, id, cam_info):
     
-    ###########Fan WU###############
-    # Get the seq name 
+
     seq_num = os.path.normpath(cam_info.image_path).split(os.sep)[-2]
     
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
                   image_name=cam_info.image_name, seq_num=seq_num,uid=id,
-                  data_device=args.data_device) 
+                  data_device=args.data_device, keypoints=cam_info.keypoints, point3d_id=cam_info.point3d_id, image_path=cam_info.image_path) 
 
 
 
-def cameraList_from_camInfos(cam_infos, resolution_scale, args):
+def cameraList_from_camInfos(cam_infos,  args):
     camera_list = []
 
     for id, c in enumerate(cam_infos):
-        camera_list.append(loadCam(args, id, c, resolution_scale))
+        camera_list.append(loadCam(args, id, c))
 
     return camera_list
 
@@ -51,11 +50,7 @@ def camera_to_JSON(id, camera : Camera):
     camera_entry = {
         'id' : id,
         'img_name' : camera.image_name,
-        'width' : camera.width,
-        'height' : camera.height,
         'position': pos.tolist(),
         'rotation': serializable_array_2d,
-        'fy' : fov2focal(camera.FovY, camera.height),
-        'fx' : fov2focal(camera.FovX, camera.width)
     }
     return camera_entry

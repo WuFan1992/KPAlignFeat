@@ -15,7 +15,7 @@ import sys
 
 from typing import NamedTuple
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
-    read_extrinsics_binary, read_intrinsics_binary, read_points3D_bin, read_points3D_text, read_points3D_nvm
+    read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text, read_points3D_nvm
 from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
 import numpy as np
 import json
@@ -115,7 +115,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, foundation_model, images, eval, llffhold=8): 
+def readColmapSceneInfo(path, images, eval): 
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -176,12 +176,9 @@ def readColmapSceneInfo(path, foundation_model, images, eval, llffhold=8):
         except:
             xyz, rgb, _ = read_points3D_text(txt_path)
         storePly(ply_path, xyz, rgb)
-    try:
-        pcd = fetchPly(ply_path)
-    except:
-        pcd = None
+
     scene_info = SceneInfo(train_cameras=train_cam_infos,
-                           test_cameras=test_cam_infos
+                           test_cameras=test_cam_infos,
                            ply_path=ply_path)
      
     return scene_info

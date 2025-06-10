@@ -6,8 +6,33 @@ from utils.graphics_utils import BasicPointCloud
 from utils.system_utils import mkdir_p
 
 from plyfile import PlyData, PlyElement
-from .dataset_readers import fetchPly
+from scene.colmap_loader import read_points3D_binary, read_points3D_text
 
+def fetchPly(path):
+    plydata = PlyData.read(path)
+    vertices = plydata['vertex']
+    positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
+    colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
+    normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    ids_3d = vertices['id_3d']
+    return BasicPointCloud(points=positions, colors=colors, normals=normals, ids_3d=ids_3d)
+
+def storePly(path, xyz, rgb, ids_3d):
+    # Define the dtype for the structured array
+    dtype = [('x', 'f4'), ('y', 'f4'), ('z', 'f4'),
+            ('nx', 'f4'), ('ny', 'f4'), ('nz', 'f4'),
+            ('red', 'u1'), ('green', 'u1'), ('blue', 'u1'), ('id_3d', 'int32')]
+    
+    normals = np.zeros_like(xyz)
+
+    elements = np.empty(xyz.shape[0], dtype=dtype)
+    attributes = np.concatenate((xyz, normals, rgb, ids_3d), axis=1)
+    elements[:] = list(map(tuple, attributes))
+
+    # Create the PlyData object and write to file
+    vertex_element = PlyElement.describe(elements, 'vertex')
+    ply_data = PlyData([vertex_element])
+    ply_data.write(path)
 
 
 class FeatPointCloud:
@@ -16,6 +41,8 @@ class FeatPointCloud:
         self._xyz = torch.empty(0).to("cuda")
         self.xyz_gradient_accum = torch.empty(0)
         self._semantic_feature = torch.empty(0).to("cuda") 
+        self._ids_3d = torch.empty(0).to("cuda")
+        
     @property
     def get_xyz(self):
         return self._xyz
@@ -24,18 +51,43 @@ class FeatPointCloud:
     def get_semantic_feature(self):
         return self._semantic_feature 
     
+    @property
+    def get_ids_3d(self):
+        return self._ids_3d 
+    
+    
+    def generate_ply(self, path):
+        ply_path = os.path.join(path, "sparse/0/points3D_withidx.ply")
+        bin_path = os.path.join(path, "sparse/0/points3D.bin")
+        txt_path = os.path.join(path, "sparse/0/points3D.txt")
+        if not os.path.exists(ply_path):
+            print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
+            try:
+                xyz, rgb, _, ids_3d = read_points3D_binary(bin_path)
+            
+            except:
+                xyz, rgb, _, ids_3d = read_points3D_text(txt_path)
+            
+            storePly(ply_path, xyz, rgb, ids_3d)
+        
+    
     def init_feat_pc(self, source_path, semantic_feature_size : int):
         """
         fetch the point cloud 
         """
+        # Generate the ply file
+        self.generate_ply(source_path)
+        
         # Get the point cloud path
-        pc_path = os.path.join(source_path,"sparse/0/points3D.ply")
+        pc_path = os.path.join(source_path,"sparse/0/points3D_withidx.ply")
         # Load the pcd
         pcd = fetchPly(pc_path)
         # set the initial xyz 
         self._xyz = torch.tensor(np.asarray(pcd.points)).float().cuda()
         # initialize the feature
         self._semantic_feature = torch.zeros(self._xyz.shape[0], semantic_feature_size, 1).float().cuda()
+        # Set the point cloud 3D
+        self._ids_3d = torch.tensor(np.array(pcd.ids_3d)).float().cuda()
         
     
     def construct_list_of_attributes(self):
@@ -71,19 +123,23 @@ class FeatPointCloud:
         self._semantic_feature = np.expand_dims(semantic_feature, axis=-1) 
 
     
-    def update_ply(self, kps: torch.Tensor, kp_feat: torch.Tensor):
+    def update_ply(self, indices: np.array, kp_feat: torch.Tensor):
         """
             For each matched 3D points, find its closest point in point cloud and update its feature 
-            kp : 3D point associated with keypoint detected in query image [N, 3]
+            indices :  index in the Point cloud that need to update the feature
             kp_feat: 3D point feature [N, 64] 
         
         """
-        kp_idx = 0 
-        for kp in kps:
-            distance = torch.norm(self._xyz - kp, dim=1)
-            closest_index = torch.argmin(distance).item()
-            self._semantic_feature[closest_index] = kp_feat[kp_idx].unsqueeze(-1)
-            kp_idx = kp_idx + 1
+        
+        valid_mask = indices != -1
+        filter_indices = torch.tensor(indices[valid_mask])
+        filter_feature = kp_feat[valid_mask]
+
+        #Get the index of semantic_feature given the indice and the ids_3d
+        np_indices = self._ids_3d.cpu().numpy()
+        feat_indices = [np.where(np_indices == j)[0][0].item() for j in filter_indices]
+        self._semantic_feature[feat_indices] = filter_feature.unsqueeze(-1)
+            
             
             
     

@@ -89,6 +89,7 @@ def read_points3D_text(path):
     xyzs = None
     rgbs = None
     errors = None
+    ids_3d = None
     num_points = 0
     with open(path, "r") as fid:
         while True:
@@ -103,6 +104,7 @@ def read_points3D_text(path):
     xyzs = np.empty((num_points, 3))
     rgbs = np.empty((num_points, 3))
     errors = np.empty((num_points, 1))
+    ids_3d = np.empty((num_points, 1))
     count = 0
     with open(path, "r") as fid:
         while True:
@@ -112,15 +114,17 @@ def read_points3D_text(path):
             line = line.strip()
             if len(line) > 0 and line[0] != "#":
                 elems = line.split()
+                id_3d = np.array(tuple(map(int, elems[0])))
                 xyz = np.array(tuple(map(float, elems[1:4])))
                 rgb = np.array(tuple(map(int, elems[4:7])))
                 error = np.array(float(elems[7]))
                 xyzs[count] = xyz
                 rgbs[count] = rgb
                 errors[count] = error
+                ids_3d[count] = id_3d
                 count += 1
 
-    return xyzs, rgbs, errors
+    return xyzs, rgbs, errors, ids_3d
 
 
 def read_points3D_nvm(nvm_file, threshold=1000):
@@ -174,36 +178,39 @@ def read_points3D_nvm(nvm_file, threshold=1000):
 
 
 
-def read_points3D_bin(bin_path):
-    points3D = {}
+def read_points3D_binary(path_to_model_file):
+    """
+    see: src/base/reconstruction.cc
+        void Reconstruction::ReadPoints3DBinary(const std::string& path)
+        void Reconstruction::WritePoints3DBinary(const std::string& path)
+    """
 
-    with open(bin_path, "rb") as f:
-        while True:
-            # Each point entry starts with a 64-bit unsigned ID
-            binary_data = f.read(8)
-            if not binary_data:
-                break  # EOF
 
-            point_id = struct.unpack("<Q", binary_data)[0]
-            xyz = struct.unpack("<3d", f.read(24))  # X, Y, Z
-            rgb = struct.unpack("<3B", f.read(3))   # R, G, B
-            error = struct.unpack("<d", f.read(8))[0]  # reprojection error
+    with open(path_to_model_file, "rb") as fid:
+        num_points = read_next_bytes(fid, 8, "Q")[0]
 
-            track_length = struct.unpack("<Q", f.read(8))[0]  # number of track elements
+        ids_3d = np.empty((num_points, 1))
+        xyzs = np.empty((num_points, 3))
+        rgbs = np.empty((num_points, 3))
+        errors = np.empty((num_points, 1))
 
-            track_elems = []
-            for _ in range(track_length):
-                image_id, point2d_idx = struct.unpack("<ii", f.read(8))
-                track_elems.append((image_id, point2d_idx))
-
-            points3D[point_id] = {
-                "xyz": np.array(xyz),
-                "rgb": np.array(rgb),
-                "error": error,
-                "track": track_elems
-            }
-
-    return points3D
+        for p_id in range(num_points):
+            binary_point_line_properties = read_next_bytes(
+                fid, num_bytes=43, format_char_sequence="QdddBBBd")
+            id_3d = np.array(binary_point_line_properties[0]) 
+            xyz = np.array(binary_point_line_properties[1:4])
+            rgb = np.array(binary_point_line_properties[4:7])
+            error = np.array(binary_point_line_properties[7])
+            track_length = read_next_bytes(
+                fid, num_bytes=8, format_char_sequence="Q")[0]
+            track_elems = read_next_bytes(
+                fid, num_bytes=8*track_length,
+                format_char_sequence="ii"*track_length)
+            xyzs[p_id] = xyz
+            rgbs[p_id] = rgb
+            errors[p_id] = error
+            ids_3d[p_id] = id_3d
+    return xyzs, rgbs, errors, ids_3d
 
 def read_intrinsics_text(path):
     """

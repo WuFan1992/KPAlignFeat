@@ -15,7 +15,7 @@ import numpy as np
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 
 class Camera(nn.Module):
-    def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
+    def __init__(self, colmap_id, R, T, FoVx, FoVy, keypoints, point3d_id, image_path,
                  image_name, seq_num, uid,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda"
                  ): 
@@ -28,6 +28,7 @@ class Camera(nn.Module):
         self.FoVx = FoVx
         self.FoVy = FoVy
         self.image_name = image_name
+        self.image_path = image_path
         ################## Fan WU #### 
         self.seq_num = seq_num
         ##############################
@@ -38,6 +39,8 @@ class Camera(nn.Module):
             print(f"[Warning] Custom device {data_device} failed, fallback to default cuda device" )
             self.data_device = torch.device("cuda")
 
+        self.keypoints = keypoints
+        self.point3d_id = point3d_id
 
         self.zfar = 100.0
         self.znear = 0.01

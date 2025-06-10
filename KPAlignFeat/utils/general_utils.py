@@ -14,12 +14,13 @@ import sys
 from datetime import datetime
 import numpy as np
 import random
+import torch.nn.functional as F
 
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
 
-def PILtoTorch(pil_image, resolution):
-    resized_image_PIL = pil_image.resize(resolution)
+def PILtoTorch(pil_image):
+    resized_image_PIL = pil_image
     resized_image = torch.from_numpy(np.array(resized_image_PIL)) / 255.0
     if len(resized_image.shape) == 3:
         return resized_image.permute(2, 0, 1)
@@ -134,22 +135,32 @@ def safe_state(silent):
     
     
 def image_process(image, device= "cuda"):
-    resized_image_rgb = PILtoTorch(image, 1.0)
+    resized_image_rgb = PILtoTorch(image)
     gt_image = resized_image_rgb[:3, ...]
-    
-    loaded_mask = None
+    original_image = gt_image.clamp(0.0, 1.0)
+    return original_image    
 
-    if resized_image_rgb.shape[1] == 4:
-        loaded_mask = resized_image_rgb[3:4, ...]
+def sample_features(coords, feature_map):
+    # Get the size 
+    H, W = feature_map.shape[1], feature_map.shape[2]
+    feature_map = feature_map.unsqueeze(0)
     
-    original_image = gt_image.clamp(0.0, 1.0).to(device)
-    image_width = original_image.shape[2]
-    image_height = original_image.shape[1]
+    # 分离坐标并归一化到 [-1, 1]
+    x = coords[:, 1]
+    y = coords[:, 0]
+    x_norm = (x / (W - 1)) * 2 - 1
+    y_norm = (y / (H - 1)) * 2 - 1
 
-    if loaded_mask is not None:
-            original_image *= loaded_mask.to(device)
-    else:
-            original_image *= torch.ones((1, image_height, image_width), device)
-    return  original_image
+    # 拼成 grid，形状为 [1, N, 1, 2]
+    grid = torch.stack((x_norm, y_norm), dim=1).unsqueeze(0).unsqueeze(2).float()  # shape: [1, N, 1, 2]
+
+    # 使用 grid_sample 进行双线性插值
+    # 输入: [1, C, H, W], grid: [1, N, 1, 2] -> 输出: [1, C, N, 1]
+    sampled = F.grid_sample(feature_map, grid, mode='bilinear', align_corners=True)  # shape: [1, C, N, 1]
+
+    # 处理输出，变成 [N, C]
+    result = sampled.squeeze(0).squeeze(2).transpose(0, 1)  # shape: [N, C] = [N, 64]
+    
+    return result
         
     
