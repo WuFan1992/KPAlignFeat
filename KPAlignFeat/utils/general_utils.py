@@ -140,6 +140,7 @@ def image_process(image, device= "cuda"):
     original_image = gt_image.clamp(0.0, 1.0)
     return original_image    
 
+"""
 def sample_features(coords, feature_map):
     # Get the size 
     H, W = feature_map.shape[1], feature_map.shape[2]
@@ -163,4 +164,22 @@ def sample_features(coords, feature_map):
     
     return result
         
+"""
+def sample_features(coords: torch.Tensor, feature: torch.Tensor) -> torch.Tensor:
+    # feature shape: (C, H, W)
+    C, H, W = feature.shape
+    N = coords.shape[0]
     
+
+    x = coords[:, 0].long()
+    y = coords[:, 1].long()
+    
+    x = x.clamp(0, W - 1)
+    y = y.clamp(0, H - 1)
+    
+    flat_indices = y * W + x  # shape: (N,)
+    feature_flat = feature.view(C, -1)  # shape: (64, 480*640)
+    sampled = feature_flat[:, flat_indices]  # shape: (64, N)
+    
+    # Transpose(N, 64)
+    return sampled.t() 

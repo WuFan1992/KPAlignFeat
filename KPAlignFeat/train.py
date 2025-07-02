@@ -64,8 +64,6 @@ def training(dataset):
     # 2D semantic feature map CNN decoder
     viewpoint_stack = scene.getTrainCameras().copy()
     num_datas = len(viewpoint_stack)
-    viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-
 
     iter_start = torch.cuda.Event(enable_timing = True)
 
@@ -87,13 +85,10 @@ def training(dataset):
 
         gt_image = original_image.cuda()
         gt_feature_map = xfeat.get_descriptors(gt_image[None])[0]
-        print("gt_feature_map shape = ", gt_feature_map.shape)
 
 
         feature_map = F.interpolate(gt_feature_map.unsqueeze(0), size=(gt_image.shape[1], gt_image.shape[2]), mode='bilinear', align_corners=True).squeeze(0) #640x480
-        print("feature map shape = ", feature_map.shape)
-        keypoint_feat = sample_features(torch.tensor(viewpoint_cam.keypoints).to("cuda"), feature_map)
-            
+        keypoint_feat = sample_features(torch.tensor(viewpoint_cam.keypoints).to("cuda"), feature_map)   
         featpc.update_ply(viewpoint_cam.point3d_id, keypoint_feat)
         
         print("index = ", index)

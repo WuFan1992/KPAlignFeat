@@ -62,7 +62,7 @@ class Scene:
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras,  args)
             
     def save(self, iteration):
-        point_cloud_path = os.path.join(self.model_path, "point_cloud_chess/iteration_{}".format(iteration))
+        point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
         self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
 
     def getTrainCameras(self, scale=1.0):
